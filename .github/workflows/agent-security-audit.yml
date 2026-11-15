@@ -31,7 +31,7 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p reports
-          semgrep scan --config p/security-audit --config p/secrets --json --output "reports/${{ matrix.target }}-semgrep.json" target
+          semgrep scan --error --config p/security-audit --config p/secrets --json --output "reports/${{ matrix.target }}-semgrep.json" target
       - name: Audit Python dependencies when present
         id: pip_audit
         continue-on-error: true
@@ -51,6 +51,16 @@ jobs:
             (cd target && npm audit --json) > "reports/${{ matrix.target }}-npm-audit.json"
           else
             echo 'No root package-lock.json found; npm dependency audit skipped' > "reports/${{ matrix.target }}-npm-audit-skipped.txt"
+          fi
+      - name: Capture target revision
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p reports
+          if [ -d target/.git ]; then
+            git -C target rev-parse HEAD > "reports/${{ matrix.target }}-target-sha.txt"
+          else
+            echo 'Target checkout unavailable' > "reports/${{ matrix.target }}-target-sha.txt"
           fi
       - name: Write evidence summary
         if: always()
@@ -75,7 +85,7 @@ jobs:
           path: reports/
           if-no-files-found: error
           retention-days: 30
-      - name: Fail if scanner execution failed
+      - name: Fail if scanner found issues or execution failed
         if: always()
         shell: bash
         run: |
