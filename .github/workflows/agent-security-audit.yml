@@ -1,0 +1,39 @@
+name: AliceLabs agent security audit
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 7 * * 1'
+permissions:
+  contents: read
+jobs:
+  static-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - universal-trust-adapter
+          - atc-verifier
+          - MARKETNOW
+    steps:
+      - name: Checkout target
+        uses: actions/checkout@v4
+        with:
+          repository: alicelabs-llc/${{ matrix.target }}
+          path: target
+          persist-credentials: false
+      - name: Install Semgrep
+        run: python -m pip install 'semgrep>=1,<2'
+      - name: Run static analysis
+        run: |
+          mkdir -p reports
+          semgrep scan --config p/security-audit --config p/secrets --json --output "reports/${{ matrix.target }}.json" target
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-${{ matrix.target }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
