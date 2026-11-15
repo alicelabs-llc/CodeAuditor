@@ -1,5 +1,9 @@
 name: AliceLabs agent security audit
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/agent-security-audit.yml'
   workflow_dispatch:
   schedule:
     - cron: '15 7 * * 1'
