@@ -16,28 +16,70 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - universal-trust-adapter
-          - atc-verifier
-          - MARKETNOW
+        target: [universal-trust-adapter, atc-verifier, MARKETNOW]
     steps:
-      - name: Checkout target
+      - name: Checkout target (public repository)
         uses: actions/checkout@v4
         with:
           repository: alicelabs-llc/${{ matrix.target }}
           path: target
           persist-credentials: false
-      - name: Install Semgrep
-        run: python -m pip install 'semgrep>=1,<2'
-      - name: Run static analysis
+      - name: Install security scanners
+        run: python -m pip install 'semgrep>=1,<2' 'pip-audit>=2,<3'
+      - name: Run Semgrep static analysis
+        id: semgrep
+        continue-on-error: true
         run: |
           mkdir -p reports
-          semgrep scan --config p/security-audit --config p/secrets --json --output "reports/${{ matrix.target }}.json" target
+          semgrep scan --config p/security-audit --config p/secrets --json --output "reports/${{ matrix.target }}-semgrep.json" target
+      - name: Audit Python dependencies when present
+        id: pip_audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -f target/requirements.txt ]; then
+            pip-audit -r target/requirements.txt --format json --output "reports/${{ matrix.target }}-pip-audit.json"
+          else
+            echo 'No root requirements.txt found; Python dependency audit skipped' > "reports/${{ matrix.target }}-pip-audit-skipped.txt"
+          fi
+      - name: Audit npm dependencies when present
+        id: npm_audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -f target/package-lock.json ]; then
+            (cd target && npm audit --json) > "reports/${{ matrix.target }}-npm-audit.json"
+          else
+            echo 'No root package-lock.json found; npm dependency audit skipped' > "reports/${{ matrix.target }}-npm-audit-skipped.txt"
+          fi
+      - name: Write evidence summary
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p reports
+          {
+            echo '# AliceLabs audit execution'
+            echo "Repository: alicelabs-llc/${{ matrix.target }}"
+            echo "Commit: ${{ github.sha }} (CodeAuditor workflow, not target commit)"
+            echo "Semgrep outcome: ${{ steps.semgrep.outcome }}"
+            echo "Python dependency audit outcome: ${{ steps.pip_audit.outcome }}"
+            echo "npm dependency audit outcome: ${{ steps.npm_audit.outcome }}"
+            echo 'A skipped audit or a scanner error is NOT a clean security result.'
+          } > "reports/${{ matrix.target }}-summary.md"
+          cat "reports/${{ matrix.target }}-summary.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: audit-${{ matrix.target }}
           path: reports/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
+      - name: Fail if scanner execution failed
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.semgrep.outcome }}" != success ] || [ "${{ steps.pip_audit.outcome }}" != success ] || [ "${{ steps.npm_audit.outcome }}" != success ]; then
+            echo 'One or more scanners failed. Review uploaded evidence.'
+            exit 1
+          fi
